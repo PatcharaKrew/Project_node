@@ -22,22 +22,33 @@ app.get('/health', async (req, res) => {
 app.post('/create-patient', async (req, res) => {
     const patient = req.body;
     try {
+        patient.id_card = patient.id_card.replace(/-/g, '');
+        patient.phone = patient.phone.replace(/-/g, '');
+
         await db.tx(async t => {
-            const patientId = await t.one(`INSERT INTO patient (
-                title_name, first_name, last_name, id_card, phone, gender, date_birth,
-                house_number, street, village, subdistrict, district, province,
-                weight, height, waist, password
-            ) VALUES (
-                $[title_name], $[first_name], $[last_name], $[id_card], $[phone], $[gender], $[date_birth],
-                $[house_number], $[street], $[village], $[subdistrict], $[district], $[province],
-                $[weight], $[height], $[waist], $[password]
-            ) RETURNING id`, patient);
+            const patientId = await t.one(`
+                INSERT INTO patient (
+                    title_name, first_name, last_name, id_card, phone, gender, date_birth,
+                    house_number, street, village, subdistrict, district, province,
+                    weight, height, waist, password
+                ) VALUES (
+                    $[title_name], $[first_name], $[last_name], $[id_card], $[phone], $[gender], $[date_birth],
+                    $[house_number], $[street], $[village], $[subdistrict], $[district], $[province],
+                    $[weight], $[height], $[waist], $[password]
+                ) RETURNING id`, patient);
 
             const bmiValue = calculateBMI(patient.weight, patient.height);
-            await t.none(`INSERT INTO bmi_records (patient_id, bmi) VALUES ($1, $2)`, [patientId.id, bmiValue]);
+            const waistToHeightRatio = calculateWaistToHeightRatio(patient.waist, patient.height);
+
+            await t.none(`
+                INSERT INTO health_data (patient_id, bmi, waist_to_height_ratio) 
+                VALUES ($1, $2, $3)`, 
+                [patientId.id, bmiValue, waistToHeightRatio]);
 
             const hashedPassword = await bcrypt.hash(patient.password, 10);
-            await t.none(`INSERT INTO users (id_card, password) VALUES ($[id_card], $[password])`, {
+            await t.none(`
+                INSERT INTO users (id_card, password) 
+                VALUES ($[id_card], $[password])`, {
                 id_card: patient.id_card,
                 password: hashedPassword
             });
@@ -54,28 +65,41 @@ function calculateBMI(weight, height) {
     return (weight / ((height / 100) * (height / 100))).toFixed(2);
 }
 
+function calculateWaistToHeightRatio(waist, height) {
+    return (waist / height).toFixed(2);
+}
+
+function formatIdCard(idCard) {
+    return idCard.replace(/(\d{1})(\d{4})(\d{5})(\d{2})(\d{1})/, '$1-$2-$3-$4-$5');
+}
+
+function formatPhone(phone) {
+    return phone.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3');
+}
+
 app.post('/login', async (req, res) => {
     const { id_card, password } = req.body;
     try {
-      const user = await db.oneOrNone('SELECT * FROM users WHERE id_card = $1', [id_card]);
-      if (user && await bcrypt.compare(password, user.password)) {
-        const patient = await db.one('SELECT id FROM patient WHERE id_card = $1', [id_card]);
-        res.status(200).json({ id: patient.id.toString() }); // Ensure id is sent as a string
-      } else {
-        res.status(401).json({ message: 'Invalid ID Card or Password' });
-      }
+        const formattedIdCard = id_card.replace(/-/g, '');
+        const user = await db.oneOrNone('SELECT * FROM users WHERE id_card = $1', [formattedIdCard]);
+        if (user && await bcrypt.compare(password, user.password)) {
+            const patient = await db.one('SELECT id FROM patient WHERE id_card = $1', [formattedIdCard]);
+            res.status(200).json({ id: patient.id.toString() }); // Ensure id is sent as a string
+        } else {
+            res.status(401).json({ message: 'Invalid ID Card or Password' });
+        }
     } catch (err) {
-      console.error('Error during login:', err);
-      res.status(500).json({ message: 'Internal Server Error' });
+        console.error('Error during login:', err);
+        res.status(500).json({ message: 'Internal Server Error' });
     }
-  });
-  
-  
+});
+
 app.get('/profile/:id', async (req, res) => {
     const patientId = req.params.id;
     try {
         const profileData = await db.one(`
             SELECT 
+                p.id,
                 p.title_name,
                 p.first_name,
                 p.last_name,
@@ -92,17 +116,74 @@ app.get('/profile/:id', async (req, res) => {
                 p.weight,
                 p.height,
                 p.waist,
-                b.bmi
+                h.bmi,
+                h.waist_to_height_ratio
             FROM patient p
-            LEFT JOIN bmi_records b ON p.id = b.patient_id
+            LEFT JOIN health_data h ON p.id = h.patient_id
             WHERE p.id = $1
-            ORDER BY b.record_date DESC
+            ORDER BY h.record_date DESC
             LIMIT 1;
         `, [patientId]);
-        res.status(200).json(profileData);
+
+        // Format id_card and phone with dashes before sending response
+        profileData.id_card = formatIdCard(profileData.id_card);
+        profileData.phone = formatPhone(profileData.phone);
+
+        res.status(200).json(profileData);      
     } catch (err) {
         console.error('Error fetching profile:', err);
         res.status(500).json({ message: 'Internal Server Error' });
+    }
+});
+
+app.put('/profile/:id', async (req, res) => {
+    const patientId = req.params.id;
+    const updatedData = req.body;
+
+    try {
+        // Remove dashes from id_card and phone before saving to the database
+        updatedData.id_card = updatedData.id_card.replace(/-/g, '');
+        updatedData.phone = updatedData.phone.replace(/-/g, '');
+
+        await db.tx(async t => {
+            await t.none(`
+                UPDATE patient
+                SET
+                    title_name = $[title_name],
+                    first_name = $[first_name],
+                    last_name = $[last_name],
+                    id_card = $[id_card],
+                    phone = $[phone],
+                    gender = $[gender],
+                    date_birth = $[date_birth],
+                    house_number = $[house_number],
+                    street = $[street],
+                    village = $[village],
+                    subdistrict = $[subdistrict],
+                    district = $[district],
+                    province = $[province],
+                    weight = $[weight],
+                    height = $[height],
+                    waist = $[waist]
+                WHERE id = $[patientId]
+            `, { ...updatedData, patientId });
+
+            // Calculate new BMI and waist_to_height_ratio
+            const bmiValue = calculateBMI(updatedData.weight, updatedData.height);
+            const waistToHeightRatio = calculateWaistToHeightRatio(updatedData.waist, updatedData.height);
+
+            await t.none(`
+                INSERT INTO health_data (patient_id, bmi, waist_to_height_ratio) 
+                VALUES ($1, $2, $3)
+                ON CONFLICT (patient_id) DO UPDATE 
+                SET bmi = $2, waist_to_height_ratio = $3
+            `, [patientId, bmiValue, waistToHeightRatio]);
+
+            res.status(200).json({ message: 'Profile updated successfully' });
+        });
+    } catch (err) {
+        console.error('Error updating profile:', err);
+        res.status(500).json({ message: 'Internal Server Error', error: err.message });
     }
 });
 
