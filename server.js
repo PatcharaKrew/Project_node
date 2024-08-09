@@ -172,11 +172,15 @@ app.put('/profile/:id', async (req, res) => {
             const bmiValue = calculateBMI(updatedData.weight, updatedData.height);
             const waistToHeightRatio = calculateWaistToHeightRatio(updatedData.waist, updatedData.height);
 
+            // Insert or Update health_data
             await t.none(`
-                INSERT INTO health_data (patient_id, bmi, waist_to_height_ratio) 
-                VALUES ($1, $2, $3)
-                ON CONFLICT (patient_id) DO UPDATE 
+                UPDATE health_data 
                 SET bmi = $2, waist_to_height_ratio = $3
+                WHERE patient_id = $1;
+                
+                INSERT INTO health_data (patient_id, bmi, waist_to_height_ratio) 
+                SELECT $1, $2, $3
+                WHERE NOT EXISTS (SELECT 1 FROM health_data WHERE patient_id = $1);
             `, [patientId, bmiValue, waistToHeightRatio]);
 
             res.status(200).json({ message: 'Profile updated successfully' });
