@@ -83,8 +83,13 @@ app.post('/login', async (req, res) => {
         const formattedIdCard = id_card.replace(/-/g, '');
         const user = await db.oneOrNone('SELECT * FROM users WHERE id_card = $1', [formattedIdCard]);
         if (user && await bcrypt.compare(password, user.password)) {
-            const patient = await db.one('SELECT id FROM patient WHERE id_card = $1', [formattedIdCard]);
-            res.status(200).json({ id: patient.id.toString() }); // Ensure id is sent as a string
+            const patient = await db.one('SELECT id, title_name, first_name, last_name FROM patient WHERE id_card = $1', [formattedIdCard]);
+            res.status(200).json({ 
+                id: patient.id.toString(),
+                title_name: patient.title_name,
+                first_name: patient.first_name,
+                last_name: patient.last_name
+            });
         } else {
             res.status(401).json({ message: 'Invalid ID Card or Password' });
         }
@@ -93,6 +98,7 @@ app.post('/login', async (req, res) => {
         res.status(500).json({ message: 'Internal Server Error' });
     }
 });
+
 
 app.get('/profile/:id', async (req, res) => {
     const patientId = req.params.id;
@@ -144,8 +150,9 @@ app.put('/profile/:id', async (req, res) => {
         // Remove dashes from id_card and phone before saving to the database
         updatedData.id_card = updatedData.id_card.replace(/-/g, '');
         updatedData.phone = updatedData.phone.replace(/-/g, '');
-
+        
         await db.tx(async t => {
+            // Update patient information
             await t.none(`
                 UPDATE patient
                 SET
@@ -172,16 +179,25 @@ app.put('/profile/:id', async (req, res) => {
             const bmiValue = calculateBMI(updatedData.weight, updatedData.height);
             const waistToHeightRatio = calculateWaistToHeightRatio(updatedData.waist, updatedData.height);
 
-            // Insert or Update health_data
-            await t.none(`
-                UPDATE health_data 
-                SET bmi = $2, waist_to_height_ratio = $3
-                WHERE patient_id = $1;
-                
-                INSERT INTO health_data (patient_id, bmi, waist_to_height_ratio) 
-                SELECT $1, $2, $3
-                WHERE NOT EXISTS (SELECT 1 FROM health_data WHERE patient_id = $1);
-            `, [patientId, bmiValue, waistToHeightRatio]);
+            // Check if a record exists in health_data
+            const existingRecord = await t.oneOrNone(`
+                SELECT 1 FROM health_data WHERE patient_id = $1
+            `, [patientId]);
+
+            if (existingRecord) {
+                // If exists, update the record
+                await t.none(`
+                    UPDATE health_data 
+                    SET bmi = $2, waist_to_height_ratio = $3
+                    WHERE patient_id = $1
+                `, [patientId, bmiValue, waistToHeightRatio]);
+            } else {
+                // If not exists, insert a new record
+                await t.none(`
+                    INSERT INTO health_data (patient_id, bmi, waist_to_height_ratio) 
+                    VALUES ($1, $2, $3)
+                `, [patientId, bmiValue, waistToHeightRatio]);
+            }
 
             res.status(200).json({ message: 'Profile updated successfully' });
         });
