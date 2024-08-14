@@ -1,3 +1,4 @@
+// backend
 const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
@@ -98,7 +99,6 @@ app.post('/login', async (req, res) => {
         res.status(500).json({ message: 'Internal Server Error' });
     }
 });
-
 
 app.get('/profile/:id', async (req, res) => {
     const patientId = req.params.id;
@@ -204,6 +204,48 @@ app.put('/profile/:id', async (req, res) => {
     } catch (err) {
         console.error('Error updating profile:', err);
         res.status(500).json({ message: 'Internal Server Error', error: err.message });
+    }
+});
+
+// Route สำหรับบันทึกผลการประเมิน
+app.post('/evaluation-results', async (req, res) => {
+    const { user_id, program_name, result_program } = req.body;
+    try {
+        const result = await db.one(`
+            INSERT INTO appointments (user_id, program_name, result_program, appointment_date) 
+            VALUES ($1, $2, $3, NULL) 
+            RETURNING id`, [user_id, program_name, result_program]);
+        res.status(201).json({ id: result.id });
+    } catch (err) {
+        res.status(500).json({ message: 'Error creating evaluation result', error: err.message });
+    }
+});
+
+// Route สำหรับการสร้างการนัดหมายพร้อมผลการประเมิน (หรือไม่พร้อม)
+app.post('/create-appointment-with-result', async (req, res) => {
+    const { user_id, program_name, result_program, appointment_date } = req.body;
+    try {
+        const result = await db.one(`
+            INSERT INTO appointments (user_id, program_name, result_program, appointment_date) 
+            VALUES ($1, $2, $3, $4) 
+            RETURNING id`, [user_id, program_name, result_program, appointment_date]);
+        res.status(201).json({ id: result.id });
+    } catch (err) {
+        res.status(500).json({ message: 'Error creating appointment with result', error: err.message });
+    }
+});
+
+// Route สำหรับการสร้างการนัดหมายโดยไม่ต้องมีผลการประเมิน (นัดล่วงหน้า)
+app.post('/create-appointment', async (req, res) => {
+    const { user_id, program_name, appointment_date } = req.body;
+    try {
+        const result = await db.one(`
+            INSERT INTO appointments (user_id, program_name, result_program, appointment_date) 
+            VALUES ($1, $2, NULL, $3) 
+            RETURNING id`, [user_id, program_name, appointment_date]);
+        res.status(201).json({ id: result.id });
+    } catch (err) {
+        res.status(500).json({ message: 'Error creating appointment', error: err.message });
     }
 });
 
