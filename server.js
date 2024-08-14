@@ -249,6 +249,39 @@ app.post('/create-appointment', async (req, res) => {
     }
 });
 
+app.get('/appointments-with-date/:user_id', async (req, res) => {
+    const userId = req.params.user_id;
+    try {
+        const appointments = await db.any(`
+            SELECT id, user_id, program_name, appointment_date
+            FROM appointments
+            WHERE appointment_date IS NOT NULL AND user_id = $1
+            ORDER BY appointment_date DESC
+            LIMIT 1
+        `, [userId]);
+
+        res.status(200).json(appointments);
+    } catch (err) {
+        res.status(500).json({ message: 'Error fetching appointments', error: err.message });
+    }
+});
+
+app.get('/appointments-date-all/:user_id', async (req, res) => {
+    const userId = req.params.user_id;
+    try {
+        const appointments = await db.any(`
+            SELECT id, user_id, program_name, appointment_date
+            FROM appointments
+            WHERE appointment_date IS NOT NULL AND user_id = $1
+            ORDER BY appointment_date DESC
+        `, [userId]);
+
+        res.status(200).json(appointments);
+    } catch (err) {
+        res.status(500).json({ message: 'Error fetching appointments', error: err.message });
+    }
+});
+
 app.listen(port, () => {
     console.log(`Server is running on http://localhost:${port}`);
 });
