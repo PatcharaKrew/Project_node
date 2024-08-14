@@ -207,22 +207,7 @@ app.put('/profile/:id', async (req, res) => {
     }
 });
 
-// Route สำหรับบันทึกผลการประเมิน
 app.post('/evaluation-results', async (req, res) => {
-    const { user_id, program_name, result_program } = req.body;
-    try {
-        const result = await db.one(`
-            INSERT INTO appointments (user_id, program_name, result_program, appointment_date) 
-            VALUES ($1, $2, $3, NULL) 
-            RETURNING id`, [user_id, program_name, result_program]);
-        res.status(201).json({ id: result.id });
-    } catch (err) {
-        res.status(500).json({ message: 'Error creating evaluation result', error: err.message });
-    }
-});
-
-// Route สำหรับการสร้างการนัดหมายพร้อมผลการประเมิน (หรือไม่พร้อม)
-app.post('/create-appointment-with-result', async (req, res) => {
     const { user_id, program_name, result_program, appointment_date } = req.body;
     try {
         const result = await db.one(`
@@ -231,18 +216,22 @@ app.post('/create-appointment-with-result', async (req, res) => {
             RETURNING id`, [user_id, program_name, result_program, appointment_date]);
         res.status(201).json({ id: result.id });
     } catch (err) {
-        res.status(500).json({ message: 'Error creating appointment with result', error: err.message });
+        res.status(500).json({ message: 'Error creating evaluation result', error: err.message });
     }
 });
 
-// Route สำหรับการสร้างการนัดหมายโดยไม่ต้องมีผลการประเมิน (นัดล่วงหน้า)
+
 app.post('/create-appointment', async (req, res) => {
     const { user_id, program_name, appointment_date } = req.body;
+
     try {
+        const formattedDate = moment(appointment_date, 'DD/MM/YYYY').format('YYYY-MM-DD');
+        
         const result = await db.one(`
             INSERT INTO appointments (user_id, program_name, result_program, appointment_date) 
             VALUES ($1, $2, NULL, $3) 
-            RETURNING id`, [user_id, program_name, appointment_date]);
+            RETURNING id`, [user_id, program_name, formattedDate]);
+        
         res.status(201).json({ id: result.id });
     } catch (err) {
         res.status(500).json({ message: 'Error creating appointment', error: err.message });
@@ -256,8 +245,7 @@ app.get('/appointments-with-date/:user_id', async (req, res) => {
             SELECT id, user_id, program_name, appointment_date
             FROM appointments
             WHERE appointment_date IS NOT NULL AND user_id = $1
-            ORDER BY appointment_date DESC
-            LIMIT 1
+            ORDER BY appointment_date ASC 
         `, [userId]);
 
         res.status(200).json(appointments);
@@ -265,6 +253,7 @@ app.get('/appointments-with-date/:user_id', async (req, res) => {
         res.status(500).json({ message: 'Error fetching appointments', error: err.message });
     }
 });
+
 
 app.get('/appointments-date-all/:user_id', async (req, res) => {
     const userId = req.params.user_id;
