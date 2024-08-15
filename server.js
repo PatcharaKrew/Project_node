@@ -4,12 +4,14 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 const db = require('./db');
 const bcrypt = require('bcrypt');
+const thaiDatabase = require('./thai_database.json');
 
 const app = express();
 const port = 3000;
 
 app.use(cors());
 app.use(bodyParser.json());
+app.use(express.json());
 
 app.get('/health', async (req, res) => {
     try {
@@ -150,7 +152,7 @@ app.put('/profile/:id', async (req, res) => {
         // Remove dashes from id_card and phone before saving to the database
         updatedData.id_card = updatedData.id_card.replace(/-/g, '');
         updatedData.phone = updatedData.phone.replace(/-/g, '');
-        
+
         await db.tx(async t => {
             // Update patient information
             await t.none(`
@@ -168,41 +170,75 @@ app.put('/profile/:id', async (req, res) => {
                     village = $[village],
                     subdistrict = $[subdistrict],
                     district = $[district],
-                    province = $[province],
-                    weight = $[weight],
-                    height = $[height],
-                    waist = $[waist]
+                    province = $[province]
                 WHERE id = $[patientId]
             `, { ...updatedData, patientId });
-
-            // Calculate new BMI and waist_to_height_ratio
-            const bmiValue = calculateBMI(updatedData.weight, updatedData.height);
-            const waistToHeightRatio = calculateWaistToHeightRatio(updatedData.waist, updatedData.height);
-
-            // Check if a record exists in health_data
-            const existingRecord = await t.oneOrNone(`
-                SELECT 1 FROM health_data WHERE patient_id = $1
-            `, [patientId]);
-
-            if (existingRecord) {
-                // If exists, update the record
-                await t.none(`
-                    UPDATE health_data 
-                    SET bmi = $2, waist_to_height_ratio = $3
-                    WHERE patient_id = $1
-                `, [patientId, bmiValue, waistToHeightRatio]);
-            } else {
-                // If not exists, insert a new record
-                await t.none(`
-                    INSERT INTO health_data (patient_id, bmi, waist_to_height_ratio) 
-                    VALUES ($1, $2, $3)
-                `, [patientId, bmiValue, waistToHeightRatio]);
-            }
 
             res.status(200).json({ message: 'Profile updated successfully' });
         });
     } catch (err) {
         console.error('Error updating profile:', err);
+        res.status(500).json({ message: 'Internal Server Error', error: err.message });
+    }
+});
+
+app.put('/profile/:id/health', async (req, res) => {
+    const patientId = req.params.id;
+    const updatedHealthData = req.body;
+
+    try {
+        await db.tx(async t => {
+            // Update weight, height, waist in patient table
+            await t.none(`
+                UPDATE patient
+                SET 
+                    weight = $[weight],
+                    height = $[height],
+                    waist = $[waist]
+                WHERE id = $[patientId]
+            `, {
+                patientId: patientId,
+                weight: updatedHealthData.weight,
+                height: updatedHealthData.height,
+                waist: updatedHealthData.waist
+            });
+
+            // Calculate BMI and waist-to-height ratio
+            const bmi = calculateBMI(updatedHealthData.weight, updatedHealthData.height);
+            const waistToHeightRatio = calculateWaistToHeightRatio(updatedHealthData.waist, updatedHealthData.height);
+
+            // Check if a health_data record exists
+            const existingHealthData = await t.oneOrNone(`
+                SELECT id FROM health_data WHERE patient_id = $1
+            `, [patientId]);
+
+            if (existingHealthData) {
+                // Update health data if exists
+                await t.none(`
+                    UPDATE health_data 
+                    SET bmi = $[bmi], waist_to_height_ratio = $[waist_to_height_ratio]
+                    WHERE patient_id = $[patientId]
+                `, {
+                    patientId: patientId,
+                    bmi: bmi,
+                    waist_to_height_ratio: waistToHeightRatio
+                });
+            } else {
+                // Insert new health data if not exists
+                await t.none(`
+                    INSERT INTO health_data (patient_id, bmi, waist_to_height_ratio) 
+                    VALUES ($[patientId], $[bmi], $[waist_to_height_ratio])
+                `, {
+                    patientId: patientId,
+                    bmi: bmi,
+                    waist_to_height_ratio: waistToHeightRatio
+                });
+            }
+
+            res.status(200).json({ message: 'Health data updated successfully' });
+        });
+    } catch (err) {
+        console.error('Error updating health data:', err);
         res.status(500).json({ message: 'Internal Server Error', error: err.message });
     }
 });
@@ -254,7 +290,6 @@ app.get('/appointments-with-date/:user_id', async (req, res) => {
     }
 });
 
-
 app.get('/appointments-date-all/:user_id', async (req, res) => {
     const userId = req.params.user_id;
     try {
@@ -269,6 +304,23 @@ app.get('/appointments-date-all/:user_id', async (req, res) => {
     } catch (err) {
         res.status(500).json({ message: 'Error fetching appointments', error: err.message });
     }
+});
+
+app.get('/provinces', (req, res) => {
+    const provinces = [...new Set(thaiDatabase.map(data => data.province))]; // ดึงจังหวัดทั้งหมดจากข้อมูล
+    res.json(provinces);
+});
+  
+app.get('/districts/:province', (req, res) => {
+    const { province } = req.params;
+    const districts = [...new Set(thaiDatabase.filter(data => data.province === province).map(data => data.amphoe))]; // ดึงอำเภอจากจังหวัดที่เลือก
+    res.json(districts);
+});
+  
+app.get('/subdistricts/:district', (req, res) => {
+    const { district } = req.params;
+    const subdistricts = thaiDatabase.filter(data => data.amphoe === district).map(data => data.district); // ดึงตำบลจากอำเภอที่เลือก
+    res.json(subdistricts);
 });
 
 app.listen(port, () => {
