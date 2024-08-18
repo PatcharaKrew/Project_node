@@ -85,14 +85,20 @@ app.post('/login', async (req, res) => {
     try {
         const formattedIdCard = id_card.replace(/-/g, '');
         const user = await db.oneOrNone('SELECT * FROM users WHERE id_card = $1', [formattedIdCard]);
+
         if (user && await bcrypt.compare(password, user.password)) {
-            const patient = await db.one('SELECT id, title_name, first_name, last_name FROM patient WHERE id_card = $1', [formattedIdCard]);
-            res.status(200).json({ 
-                id: patient.id.toString(),
-                title_name: patient.title_name,
-                first_name: patient.first_name,
-                last_name: patient.last_name
-            });
+            const patient = await db.oneOrNone('SELECT id, title_name, first_name, last_name FROM patient WHERE id_card = $1', [formattedIdCard]);
+
+            if (patient) {
+                res.status(200).json({ 
+                    id: patient.id.toString(),
+                    title_name: patient.title_name,
+                    first_name: patient.first_name,
+                    last_name: patient.last_name
+                });
+            } else {
+                res.status(404).json({ message: 'Patient not found' });
+            }
         } else {
             res.status(401).json({ message: 'Invalid ID Card or Password' });
         }
@@ -133,7 +139,6 @@ app.get('/profile/:id', async (req, res) => {
             LIMIT 1;
         `, [patientId]);
 
-        // Format id_card and phone with dashes before sending response
         profileData.id_card = formatIdCard(profileData.id_card);
         profileData.phone = formatPhone(profileData.phone);
 
@@ -154,6 +159,10 @@ app.put('/profile/:id', async (req, res) => {
         updatedData.phone = updatedData.phone.replace(/-/g, '');
 
         await db.tx(async t => {
+            // Get the old id_card before updating
+            const oldData = await t.oneOrNone('SELECT id_card FROM patient WHERE id = $1', [patientId]);
+            const oldIdCard = oldData.id_card;
+
             // Update patient information
             await t.none(`
                 UPDATE patient
@@ -174,13 +183,33 @@ app.put('/profile/:id', async (req, res) => {
                 WHERE id = $[patientId]
             `, { ...updatedData, patientId });
 
-            res.status(200).json({ message: 'Profile updated successfully' });
+            // Update users information (id_card) ถ้ามีการเปลี่ยนแปลง
+            if (oldIdCard !== updatedData.id_card) {
+                await t.none(`
+                    UPDATE users
+                    SET id_card = $[id_card]
+                    WHERE id_card = $[oldIdCard]
+                `, { id_card: updatedData.id_card, oldIdCard });
+            }
+
+            // Check if password needs to be updated
+            if (updatedData.password) {
+                const hashedPassword = await bcrypt.hash(updatedData.password, 10);
+                await t.none(`
+                    UPDATE users
+                    SET password = $[hashedPassword]
+                    WHERE id_card = $[id_card]
+                `, { hashedPassword, id_card: updatedData.id_card });
+            }
+
+            res.status(200).json({ message: 'Profile and user updated successfully' });
         });
     } catch (err) {
-        console.error('Error updating profile:', err);
+        console.error('Error updating profile and user:', err);
         res.status(500).json({ message: 'Internal Server Error', error: err.message });
     }
 });
+
 
 app.put('/profile/:id/health', async (req, res) => {
     const patientId = req.params.id;
@@ -306,6 +335,59 @@ app.get('/appointments-date-all/:user_id', async (req, res) => {
     }
 });
 
+app.delete('/appointments/:id', async (req, res) => {
+    const appointmentId = req.params.id;
+
+    try {
+        await db.none('DELETE FROM appointments WHERE id = $1', [appointmentId]);
+        res.status(200).json({ message: 'Appointment deleted successfully' });
+    } catch (err) {
+        console.error('Error deleting appointment:', err);
+        res.status(500).json({ message: 'Internal Server Error' });
+    }
+});
+
+app.put('/change-password/:id', async (req, res) => {
+    const userId = req.params.id;
+    const { new_password } = req.body;
+  
+    try {
+      const hashedPassword = await bcrypt.hash(new_password, 10);
+  
+      await db.tx(async t => {
+        // อัปเดตรหัสผ่านในตาราง users
+        await t.none(`
+          UPDATE users
+          SET password = $1
+          WHERE id_card = (
+            SELECT id_card FROM patient WHERE id = $2
+          )
+        `, [hashedPassword, userId]);
+  
+        // อัปเดตรหัสผ่านในตาราง patient
+        await t.none(`
+          UPDATE patient
+          SET password = $1
+          WHERE id = $2
+        `, [hashedPassword, userId]);
+  
+        // บันทึกประวัติการแก้ไขรหัสผ่านในตาราง password_changes
+        await t.none(`
+          INSERT INTO password_changes (user_id, patient_id)
+          VALUES (
+            (SELECT id FROM users WHERE id_card = (SELECT id_card FROM patient WHERE id = $1)),
+            $1
+          )
+        `, [userId]);
+  
+        res.status(200).json({ message: 'Password updated successfully' });
+      });
+    } catch (err) {
+      console.error('Error updating password:', err);
+      res.status(500).json({ message: 'Internal Server Error', error: err.message });
+    }
+  });
+  
 app.get('/provinces', (req, res) => {
     const provinces = [...new Set(thaiDatabase.map(data => data.province))]; // ดึงจังหวัดทั้งหมดจากข้อมูล
     res.json(provinces);
