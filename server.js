@@ -386,13 +386,37 @@ app.put('/change-password/:id', async (req, res) => {
       console.error('Error updating password:', err);
       res.status(500).json({ message: 'Internal Server Error', error: err.message });
     }
-  });
-  
-app.get('/provinces', (req, res) => {
-    const provinces = [...new Set(thaiDatabase.map(data => data.province))]; // ดึงจังหวัดทั้งหมดจากข้อมูล
-    res.json(provinces);
 });
-  
+
+app.get('/appointments/web', async (req, res) => {
+    try {
+        const appointments = await db.any(`
+            SELECT
+                a.id,
+                a.user_id,
+                p.first_name, 
+                p.last_name, 
+                p.phone, 
+                a.program_name,
+                a.result_program,
+                a.appointment_date
+            FROM 
+                patient p 
+            JOIN 
+                users u ON p.id_card = u.id_card
+            JOIN 
+                appointments a ON u.id = a.user_id
+            ORDER BY 
+                a.appointment_date ASC;
+        `);
+
+        res.status(200).json(appointments);
+    } catch (err) {
+        console.error('Error fetching appointments:', err);
+        res.status(500).json({ message: 'Internal Server Error', error: err.message });
+    }
+});
+
 app.get('/districts/:province', (req, res) => {
     const { province } = req.params;
     const districts = [...new Set(thaiDatabase.filter(data => data.province === province).map(data => data.amphoe))]; // ดึงอำเภอจากจังหวัดที่เลือก
