@@ -417,6 +417,51 @@ app.get('/appointments/web', async (req, res) => {
     }
 });
 
+app.get('/appointments/details/:id', async (req, res) => {
+    const appointmentId = req.params.id;
+    try {
+        const appointmentDetails = await db.one(`
+            SELECT 
+                p.first_name, 
+                p.last_name, 
+                p.id_card, 
+                p.date_birth, 
+                p.phone, 
+                p.house_number, 
+                p.street, 
+                p.village, 
+                p.subdistrict, 
+                p.district, 
+                p.province, 
+                p.weight, 
+                p.height, 
+                p.waist, 
+                h.bmi, 
+                h.waist_to_height_ratio, 
+                a.program_name, 
+                a.result_program 
+            FROM 
+                patient p 
+            JOIN 
+                users u ON p.id_card = u.id_card 
+            JOIN 
+                appointments a ON u.id = a.user_id 
+            LEFT JOIN 
+                health_data h ON p.id = h.patient_id 
+            WHERE 
+                a.id = $1
+            ORDER BY 
+                h.record_date DESC 
+            LIMIT 1;
+        `, [appointmentId]);
+        
+        res.status(200).json(appointmentDetails);
+    } catch (err) {
+        console.error('Error fetching appointment details:', err);
+        res.status(500).json({ message: 'Internal Server Error', error: err.message });
+    }
+});
+
 app.get('/districts/:province', (req, res) => {
     const { province } = req.params;
     const districts = [...new Set(thaiDatabase.filter(data => data.province === province).map(data => data.amphoe))]; // ดึงอำเภอจากจังหวัดที่เลือก
