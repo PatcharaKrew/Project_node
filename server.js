@@ -424,9 +424,9 @@ app.get('/appointments/details/:id', async (req, res) => {
             SELECT 
                 p.first_name, 
                 p.last_name, 
+                p.phone, 
                 p.id_card, 
                 p.date_birth, 
-                p.phone, 
                 p.house_number, 
                 p.street, 
                 p.village, 
@@ -439,22 +439,19 @@ app.get('/appointments/details/:id', async (req, res) => {
                 h.bmi, 
                 h.waist_to_height_ratio, 
                 a.program_name, 
-                a.result_program 
+                a.result_program -- ดึง result_program จากตาราง appointments
             FROM 
-                patient p 
+                patient p
             JOIN 
-                users u ON p.id_card = u.id_card 
+                users u ON p.id_card = u.id_card
             JOIN 
-                appointments a ON u.id = a.user_id 
+                appointments a ON u.id = a.user_id
             LEFT JOIN 
-                health_data h ON p.id = h.patient_id 
+                health_data h ON p.id = h.patient_id
             WHERE 
                 a.id = $1
-            ORDER BY 
-                h.record_date DESC 
-            LIMIT 1;
         `, [appointmentId]);
-        
+
         res.status(200).json(appointmentDetails);
     } catch (err) {
         console.error('Error fetching appointment details:', err);
